@@ -16,5 +16,6 @@ func NewDefaultChecks(opts DefaultChecksOptions) []Check {
 	if opts.PublicTargetsOnly {
 		headers.Client = NewPublicHTTPClient()
 	}
-	return []Check{tlsCheck, headers, &EmailCheck{}}
+	exposures := &ExposuresCheck{publicTargetsOnly: opts.PublicTargetsOnly}
+	return []Check{tlsCheck, headers, exposures, &EmailCheck{}}
 }

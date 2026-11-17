@@ -17,10 +17,11 @@ import (
 func NewPublicHTTPClient() *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
-			DialContext:           publicDialContext,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: 10 * time.Second,
-			IdleConnTimeout:       30 * time.Second,
+			DialContext:            publicDialContext,
+			TLSHandshakeTimeout:    10 * time.Second,
+			ResponseHeaderTimeout:  10 * time.Second,
+			MaxResponseHeaderBytes: 64 << 10,
+			IdleConnTimeout:        30 * time.Second,
 		},
 		Timeout: 15 * time.Second,
 	}
