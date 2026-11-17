@@ -1,0 +1,155 @@
+syntax = "proto3";
+
+package scaner.v1;
+
+option go_package = "github.com/z1kkky/scaner/api/scanner/v1;scannerv1";
+
+import "google/protobuf/timestamp.proto";
+
+// Internal contract between the API and scanner. Only the API accepts users.
+service ScannerService {
+  // One call produces one scan. Do not automatically retry a broken stream
+  // with the same scan_id: the server cannot replay events yet.
+  rpc StartScan(ScanRequest) returns (stream ScanEvent);
+}
+
+message ScanRequest {
+  string scan_id = 1;                 // API-generated UUID, unique for each scan.
+  string domain = 2;                  // Canonical verified hostname, without scheme or port.
+  repeated CheckType checks = 3;     // Empty means all currently implemented categories.
+  repeated string dkim_selectors = 4; // Optional known selectors; empty means DKIM unknown.
+  repeated string page_paths = 5;     // Optional same-origin paths, e.g. /login.
+}
+
+enum CheckType {
+  CHECK_TYPE_UNSPECIFIED = 0;
+  CHECK_TYPE_TLS = 1;
+  CHECK_TYPE_HEADERS = 2;
+  CHECK_TYPE_EXPOSURES = 3;
+  CHECK_TYPE_EMAIL = 4;
+  CHECK_TYPE_PORTS = 5;
+  CHECK_TYPE_CMS = 6;
+  CHECK_TYPE_NUCLEI = 7;
+}
+
+// Planned individual checks. An enum value defines the contract, not an
+// implementation. A requested category may report SKIPPED until it is built.
+// Add new values without changing existing numbers.
+enum ProbeType {
+  PROBE_TYPE_UNSPECIFIED = 0;
+  PROBE_TYPE_TLS_CERT_EXPIRY = 1;
+  PROBE_TYPE_TLS_CERT_HOSTNAME = 2;
+  PROBE_TYPE_TLS_CERT_CHAIN = 3;
+  PROBE_TYPE_TLS_PROTOCOL = 4;
+  PROBE_TYPE_TLS_HTTP_REDIRECT = 5;
+  PROBE_TYPE_HEADERS_HSTS = 6;
+  PROBE_TYPE_HEADERS_CSP = 7;
+  PROBE_TYPE_HEADERS_FRAME_PROTECTION = 8;
+  PROBE_TYPE_HEADERS_NOSNIFF = 9;
+  PROBE_TYPE_HEADERS_SESSION_COOKIES = 10;
+  PROBE_TYPE_EXPOSURES_GIT = 11;
+  PROBE_TYPE_EXPOSURES_ENV = 12;
+  PROBE_TYPE_EXPOSURES_BACKUP = 13;
+  PROBE_TYPE_EXPOSURES_DIRECTORY_LISTING = 14;
+  PROBE_TYPE_EXPOSURES_ADMIN_INTERFACE = 15;
+  PROBE_TYPE_EMAIL_SPF = 16;
+  PROBE_TYPE_EMAIL_DKIM = 17;
+  PROBE_TYPE_EMAIL_DMARC = 18;
+  PROBE_TYPE_PORTS_TCP = 19;
+  PROBE_TYPE_CMS_VERSION = 20;
+  PROBE_TYPE_NUCLEI_TEMPLATE = 21;
+}
+
+enum Severity {
+  SEVERITY_UNSPECIFIED = 0;
+  SEVERITY_INFO = 1;
+  SEVERITY_LOW = 2;
+  SEVERITY_MEDIUM = 3;
+  SEVERITY_HIGH = 4;
+  SEVERITY_CRITICAL = 5;
+}
+
+enum CheckStatus {
+  CHECK_STATUS_UNSPECIFIED = 0;
+  CHECK_STATUS_COMPLETED = 1;   // Checked; findings may be empty.
+  CHECK_STATUS_INCOMPLETE = 2;  // Partial result; findings may still be useful.
+  CHECK_STATUS_FAILED = 3;      // No reliable result.
+  CHECK_STATUS_SKIPPED = 4;     // Not applicable or disabled.
+}
+
+enum ScanStatus {
+  SCAN_STATUS_UNSPECIFIED = 0;
+  SCAN_STATUS_COMPLETED = 1;
+  SCAN_STATUS_PARTIAL = 2;
+  SCAN_STATUS_FAILED = 3;
+}
+
+enum Grade {
+  GRADE_UNSPECIFIED = 0;
+  GRADE_A = 1;
+  GRADE_B = 2;
+  GRADE_C = 3;
+  GRADE_D = 4;
+  GRADE_E = 5;
+  GRADE_F = 6;
+}
+
+message Finding {
+  string id = 1;          // Stable rule ID, e.g. headers.missing_hsts.
+  Severity severity = 2;
+  string title = 3;       // User-facing Russian text.
+  string description = 4; // Consequence in plain language.
+  string fix = 5;         // Actionable remediation.
+  string location = 6;    // URL path, DNS name, or port. Never credentials.
+  string evidence = 7;    // Short redacted observation, never secret contents.
+  string probe_id = 8;    // Matches ProbeResult.id within this CheckResult.
+  ProbeType probe = 9;    // Planned check type; id describes the actual issue.
+}
+
+// Outcome of one concrete test inside a category. This makes partial coverage visible.
+// id is stable within its category (e.g. headers.csp or ports.tcp.6379).
+// Multiple results may use the same type at different locations, such as
+// headers.csp on / and /login or ports.tcp on 5432 and 6379.
+message ProbeResult {
+  string id = 1;
+  CheckStatus status = 2;
+  string location = 3;   // Path, DNS name, or port when applicable.
+  string message = 4;    // Short safe explanation of skipped/failed checks.
+  ProbeType type = 5;    // One of the planned types above.
+}
+
+message CheckResult {
+  CheckType check = 1;
+  CheckStatus status = 2;
+  repeated Finding findings = 3;
+  int64 duration_ms = 4;
+  string error_code = 5; // Stable machine-readable code when incomplete/failed.
+  string message = 6;    // Safe text for the report; no stack trace or secrets.
+  repeated ProbeResult probes = 7; // Includes clean, skipped and failed subchecks.
+}
+
+message ScanSummary {
+  ScanStatus status = 1;
+  optional int32 score = 2; // 0..100; absent if an honest score is impossible.
+  Grade grade = 3;          // Unspecified when score is absent.
+  int32 completed_checks = 4;
+  int32 requested_checks = 5;
+  google.protobuf.Timestamp finished_at = 6;
+  string error_code = 7; // Optional reason for a partial/failed scan.
+  string message = 8;    // Safe user-facing explanation.
+}
+
+message ScanStarted {
+  repeated CheckType checks = 1; // Actual categories selected when request.checks was empty.
+  google.protobuf.Timestamp started_at = 2;
+}
+
+message ScanEvent {
+  string scan_id = 1;
+  uint64 sequence = 2; // Starts at 1 for started, increases within a scan.
+  oneof payload {
+    CheckResult check_done = 3;
+    ScanSummary finished = 4;
+    ScanStarted started = 5;
+  }
+}
