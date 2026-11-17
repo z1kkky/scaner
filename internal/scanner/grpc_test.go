@@ -3,10 +3,12 @@ package scanner
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -50,6 +52,18 @@ type cmsDetailedRPCCheck struct{}
 func (cmsDetailedRPCCheck) Name() string { return "cms" }
 func (cmsDetailedRPCCheck) Run(context.Context, string) ([]check.Finding, error) {
 	return nil, nil
+}
+
+type portsDetailedRPCCheck struct{}
+
+func (portsDetailedRPCCheck) Name() string { return "ports" }
+func (portsDetailedRPCCheck) Run(context.Context, string) ([]check.Finding, error) {
+	return nil, nil
+}
+func (portsDetailedRPCCheck) RunDetailed(context.Context, string) (check.Detail, error) {
+	return check.Detail{Probes: []check.ProbeResult{{
+		ID: "ports.tcp@22", Type: "ports_tcp", Status: "completed", Location: "example.com:22",
+	}}}, nil
 }
 func (cmsDetailedRPCCheck) RunDetailed(context.Context, string) (check.Detail, error) {
 	return check.Detail{Probes: []check.ProbeResult{{
@@ -154,6 +168,8 @@ func TestStartScanInvalidRequest(t *testing.T) {
 	for _, req := range []*pb.ScanRequest{
 		{}, {ScanId: "id", Domain: "https://example.com"},
 		{ScanId: "id", Domain: "example.com", Checks: []pb.CheckType{999}},
+		{ScanId: "id", Domain: "example.com", Checks: []pb.CheckType{pb.CheckType_CHECK_TYPE_HEADERS, pb.CheckType_CHECK_TYPE_HEADERS, pb.CheckType_CHECK_TYPE_HEADERS, pb.CheckType_CHECK_TYPE_HEADERS, pb.CheckType_CHECK_TYPE_HEADERS, pb.CheckType_CHECK_TYPE_HEADERS, pb.CheckType_CHECK_TYPE_HEADERS, pb.CheckType_CHECK_TYPE_HEADERS}},
+		{ScanId: strings.Repeat("x", 129), Domain: "example.com"},
 		{ScanId: "id", Domain: "example.com", Checks: []pb.CheckType{0}},
 		{ScanId: "id", Domain: "example.com", PagePaths: []string{"//foreign.example/login"}},
 		{ScanId: "id", Domain: "example.com", DkimSelectors: []string{"bad selector"}},
@@ -200,6 +216,62 @@ func TestStartScanCancellation(t *testing.T) {
 	case <-stopped:
 	case <-time.After(time.Second):
 		t.Fatal("check was not canceled")
+	}
+}
+
+func TestStartScanRejectsExcessConcurrentScans(t *testing.T) {
+	var active atomic.Int32
+	client := rpcClient(t, rpcCheck{run: func(ctx context.Context) ([]check.Finding, error) {
+		active.Add(1)
+		defer active.Add(-1)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}})
+
+	streams := make([]pb.ScannerService_StartScanClient, maxConcurrentScans)
+	cancels := make([]context.CancelFunc, maxConcurrentScans)
+	for i := range streams {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancels[i] = cancel
+		stream, err := client.StartScan(ctx, &pb.ScanRequest{ScanId: fmt.Sprintf("load-%d", i), Domain: "example.com"})
+		if err != nil {
+			t.Fatalf("start scan %d: %v", i, err)
+		}
+		streams[i] = stream
+		if _, err := stream.Recv(); err != nil {
+			t.Fatalf("scan %d did not send started event: %v", i, err)
+		}
+	}
+	defer func() {
+		for _, cancel := range cancels {
+			cancel()
+		}
+	}()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for active.Load() != maxConcurrentScans && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := active.Load(); got != maxConcurrentScans {
+		t.Fatalf("active scans = %d, want %d", got, maxConcurrentScans)
+	}
+
+	stream, err := client.StartScan(context.Background(), &pb.ScanRequest{ScanId: "over-capacity", Domain: "example.com"})
+	if err == nil {
+		_, err = stream.Recv()
+	}
+	if status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("excess scan error = %v, want ResourceExhausted", err)
+	}
+	for _, cancel := range cancels {
+		cancel()
+	}
+	deadline = time.Now().Add(3 * time.Second)
+	for active.Load() != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := active.Load(); got != 0 {
+		t.Fatalf("%d scan checks still active after cancellation", got)
 	}
 }
 
@@ -402,5 +474,30 @@ func TestStartScanMapsCMSProbeTypes(t *testing.T) {
 	probe := result.Probes[0]
 	if probe.Type != pb.ProbeType_PROBE_TYPE_CMS_VERSION || probe.Status != pb.CheckStatus_CHECK_STATUS_COMPLETED {
 		t.Fatalf("CMS probe enum mapping failed: %v", probe)
+	}
+}
+
+func TestStartScanMapsPortProbeTypes(t *testing.T) {
+	client := rpcClient(t, portsDetailedRPCCheck{})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	stream, err := client.StartScan(ctx, &pb.ScanRequest{ScanId: "ports", Domain: "example.com", Checks: []pb.CheckType{pb.CheckType_CHECK_TYPE_PORTS}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Recv(); err != nil {
+		t.Fatal(err)
+	}
+	event, err := stream.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := event.GetCheckDone()
+	if result == nil || result.Check != pb.CheckType_CHECK_TYPE_PORTS || len(result.Probes) != 1 {
+		t.Fatalf("bad ports result: %v", event)
+	}
+	probe := result.Probes[0]
+	if probe.Type != pb.ProbeType_PROBE_TYPE_PORTS_TCP || probe.Status != pb.CheckStatus_CHECK_STATUS_COMPLETED {
+		t.Fatalf("port probe enum mapping failed: %v", probe)
 	}
 }

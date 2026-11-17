@@ -55,6 +55,7 @@ func (c *TLSCheck) RunDetailed(ctx context.Context, domain string) (Detail, erro
 		}
 	} else {
 		state := conn.ConnectionState()
+		_ = conn.CloseWrite()
 		conn.Close()
 		if len(state.PeerCertificates) == 0 {
 			err = errors.New("peer did not provide a certificate")

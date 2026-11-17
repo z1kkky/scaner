@@ -18,12 +18,21 @@ import (
 // The calling API is responsible for domain ownership verification.
 type Server struct {
 	pb.UnimplementedScannerServiceServer
-	checks  []check.Check
-	timeout time.Duration
+	checks    []check.Check
+	timeout   time.Duration
+	scanSlots chan struct{}
 }
 
+const maxConcurrentScans = 8
+
 func NewServer(checks []check.Check, timeout time.Duration) *Server {
-	return &Server{checks: append([]check.Check(nil), checks...), timeout: timeout}
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	return &Server{
+		checks: append([]check.Check(nil), checks...), timeout: timeout,
+		scanSlots: make(chan struct{}, maxConcurrentScans),
+	}
 }
 
 var checkNames = map[pb.CheckType]string{
@@ -49,6 +58,9 @@ func (s *Server) StartScan(req *pb.ScanRequest, stream grpc.ServerStreamingServe
 	if req == nil || strings.TrimSpace(req.GetScanId()) == "" || !validDomain(req.GetDomain()) {
 		return status.Error(codes.InvalidArgument, "scan_id and a canonical domain are required")
 	}
+	if len(req.GetScanId()) > 128 {
+		return status.Error(codes.InvalidArgument, "scan_id is too long")
+	}
 	if len(req.GetPagePaths()) > 20 || len(req.GetDkimSelectors()) > 20 {
 		return status.Error(codes.InvalidArgument, "too many page paths or DKIM selectors")
 	}
@@ -64,12 +76,26 @@ func (s *Server) StartScan(req *pb.ScanRequest, stream grpc.ServerStreamingServe
 		}
 	}
 	names := make([]string, 0, len(req.GetChecks()))
+	seen := make(map[pb.CheckType]bool, len(req.GetChecks()))
+	if len(req.GetChecks()) > len(checkNames) {
+		return status.Error(codes.InvalidArgument, "too many checks")
+	}
 	for _, kind := range req.GetChecks() {
 		name, ok := checkNames[kind]
 		if !ok {
 			return status.Error(codes.InvalidArgument, "unknown check type")
 		}
+		if seen[kind] {
+			continue
+		}
+		seen[kind] = true
 		names = append(names, name)
+	}
+	select {
+	case s.scanSlots <- struct{}{}:
+		defer func() { <-s.scanSlots }()
+	default:
+		return status.Error(codes.ResourceExhausted, "too many concurrent scans")
 	}
 	err := Run(stream.Context(), Request{ScanID: req.GetScanId(), Domain: req.GetDomain(), Checks: names, PagePaths: req.GetPagePaths(), DKIMSelectors: req.GetDkimSelectors()}, s.checks, s.timeout, func(event Event) error {
 		return stream.Send(protoEvent(event))
