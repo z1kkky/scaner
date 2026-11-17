@@ -26,6 +26,18 @@ type rpcCheck struct {
 func (rpcCheck) Name() string                                                 { return "headers" }
 func (c rpcCheck) Run(ctx context.Context, _ string) ([]check.Finding, error) { return c.run(ctx) }
 
+type tlsDetailedRPCCheck struct{}
+
+func (tlsDetailedRPCCheck) Name() string { return "tls" }
+func (tlsDetailedRPCCheck) Run(context.Context, string) ([]check.Finding, error) {
+	return nil, nil
+}
+func (tlsDetailedRPCCheck) RunDetailed(context.Context, string) (check.Detail, error) {
+	return check.Detail{Probes: []check.ProbeResult{{
+		ID: "tls.cert_expiry", Type: "tls_cert_expiry", Status: "completed", Location: "example.com:443",
+	}}}, nil
+}
+
 func rpcClient(t *testing.T, c check.Check) pb.ScannerServiceClient {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
@@ -291,5 +303,30 @@ func TestStartScanDetailedOptions(t *testing.T) {
 				t.Fatalf("expected EOF: %v", err)
 			}
 		})
+	}
+}
+
+func TestStartScanMapsTLSProbeTypes(t *testing.T) {
+	client := rpcClient(t, tlsDetailedRPCCheck{})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	stream, err := client.StartScan(ctx, &pb.ScanRequest{ScanId: "tls", Domain: "example.com", Checks: []pb.CheckType{pb.CheckType_CHECK_TYPE_TLS}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Recv(); err != nil {
+		t.Fatal(err)
+	}
+	event, err := stream.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := event.GetCheckDone()
+	if result == nil || result.Check != pb.CheckType_CHECK_TYPE_TLS || len(result.Probes) != 1 {
+		t.Fatalf("bad TLS result: %v", event)
+	}
+	probe := result.Probes[0]
+	if probe.Type != pb.ProbeType_PROBE_TYPE_TLS_CERT_EXPIRY || probe.Status != pb.CheckStatus_CHECK_STATUS_COMPLETED {
+		t.Fatalf("TLS probe enum mapping failed: %v", probe)
 	}
 }

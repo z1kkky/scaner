@@ -12,8 +12,9 @@ type DefaultChecksOptions struct {
 // isolated and the two entrypoints cannot silently drift apart.
 func NewDefaultChecks(opts DefaultChecksOptions) []Check {
 	headers := &HeadersCheck{}
+	tlsCheck := &TLSCheck{publicTargetsOnly: opts.PublicTargetsOnly}
 	if opts.PublicTargetsOnly {
 		headers.Client = NewPublicHTTPClient()
 	}
-	return []Check{headers, &EmailCheck{}}
+	return []Check{tlsCheck, headers, &EmailCheck{}}
 }
