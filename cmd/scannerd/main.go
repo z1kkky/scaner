@@ -36,8 +36,8 @@ func main() {
 		log.Print("WARNING: remote gRPC listener has no authentication; isolate it to trusted API traffic")
 	}
 	server := grpc.NewServer()
-	headers := &check.HeadersCheck{Client: check.NewPublicHTTPClient()}
-	pb.RegisterScannerServiceServer(server, scanner.NewServer([]check.Check{headers, &check.EmailCheck{}}, *timeout))
+	checks := check.NewDefaultChecks(check.DefaultChecksOptions{PublicTargetsOnly: true})
+	pb.RegisterScannerServiceServer(server, scanner.NewServer(checks, *timeout))
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
