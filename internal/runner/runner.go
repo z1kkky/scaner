@@ -3,7 +3,7 @@ package runner
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"sort"
 	"sync"
 	"time"
@@ -11,12 +11,24 @@ import (
 	"github.com/z1kkky/scaner/internal/check"
 )
 
+type Status string
+
+const (
+	StatusCompleted  Status = "completed"
+	StatusIncomplete Status = "incomplete"
+	StatusFailed     Status = "failed"
+	StatusSkipped    Status = "skipped"
+)
+
 // Result — итог одной проверки.
 type Result struct {
-	Check      string          `json:"check"`
-	Findings   []check.Finding `json:"findings"`
-	DurationMs int64           `json:"duration_ms"`
-	TimedOut   bool            `json:"timed_out,omitempty"` // omitempty: не писать поле, если false
+	Probes     []check.ProbeResult `json:"probes,omitempty"`
+	Check      string              `json:"check"`
+	Findings   []check.Finding     `json:"findings"`
+	DurationMs int64               `json:"duration_ms"`
+	TimedOut   bool                `json:"timed_out,omitempty"` // omitempty: не писать поле, если false
+	Status     Status              `json:"status"`
+	ErrorCode  string              `json:"error_code,omitempty"`
 }
 
 // Report — итог сканирования домена целиком.
@@ -35,7 +47,23 @@ type Report struct {
 // timeout — сколько времени даём КАЖДОЙ проверке.
 func Run(ctx context.Context, domain string, checks []check.Check, timeout time.Duration) Report {
 	started := time.Now()
+	var all []Result
+	for result := range Stream(ctx, domain, checks, timeout) {
+		all = append(all, result)
+	}
 
+	sort.Slice(all, func(i, j int) bool { return all[i].Check < all[j].Check })
+	return Report{
+		Domain:     domain,
+		StartedAt:  started.UTC(),
+		DurationMs: time.Since(started).Milliseconds(),
+		Results:    all,
+	}
+}
+
+// Stream запускает проверки параллельно и выдаёт результаты по мере готовности.
+// Отмена ctx передаётся всем запущенным проверкам.
+func Stream(ctx context.Context, domain string, checks []check.Check, timeout time.Duration) <-chan Result {
 	// Канал — «труба», по которой горутины безопасно передают данные.
 	// Буфер размером len(checks): каждая горутина сможет положить результат
 	// и завершиться, не дожидаясь, пока его заберут.
@@ -60,22 +88,7 @@ func Run(ctx context.Context, domain string, checks []check.Check, timeout time.
 		close(results)
 	}()
 
-	// range по каналу читает значения, пока канал не закроют.
-	var all []Result
-	for r := range results {
-		all = append(all, r)
-	}
-
-	// Горутины финишируют в случайном порядке — сортируем,
-	// чтобы отчёт всегда выглядел одинаково.
-	sort.Slice(all, func(i, j int) bool { return all[i].Check < all[j].Check })
-
-	return Report{
-		Domain:     domain,
-		StartedAt:  started.UTC(),
-		DurationMs: time.Since(started).Milliseconds(),
-		Results:    all,
-	}
+	return results
 }
 
 // runOne выполняет одну проверку со своим таймаутом.
@@ -88,26 +101,75 @@ func runOne(parent context.Context, domain string, c check.Check, timeout time.D
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
-	// recover ловит панику (аварийное падение) внутри проверки.
-	// Без этого ошибка в одной проверке уронила бы весь сканер.
+	res.Status = StatusFailed
+	res.Findings = []check.Finding{}
 	defer func() {
-		if p := recover(); p != nil {
-			res.Findings = []check.Finding{{
-				CheckName:   c.Name(),
-				Title:       "Внутренняя ошибка проверки",
-				Severity:    check.SeverityInfo,
-				Description: fmt.Sprint(p),
-			}}
+		if recover() != nil {
+			res.ErrorCode = "internal_error"
 		}
 		res.DurationMs = time.Since(start).Milliseconds()
 	}()
 
-	res.Findings = c.Run(ctx, domain)
+	var findings []check.Finding
+	var err error
+	if detailed, ok := c.(check.DetailedCheck); ok {
+		var detail check.Detail
+		detail, err = detailed.RunDetailed(ctx, domain)
+		findings, res.Probes = detail.Findings, detail.Probes
+	} else {
+		findings, err = c.Run(ctx, domain)
+	}
+	// Preserve useful results even when the category deadline expires.
+	res.Findings = findings
 	if res.Findings == nil {
-		// Пустой срез вместо nil, чтобы в JSON было [] а не null.
 		res.Findings = []check.Finding{}
 	}
-	// Если дедлайн истёк, отметим это — результат может быть неполным.
-	res.TimedOut = ctx.Err() == context.DeadlineExceeded
+
+	switch {
+	case ctx.Err() == context.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded):
+		res.TimedOut = true
+		res.ErrorCode = "timeout"
+	case ctx.Err() == context.Canceled || errors.Is(err, context.Canceled):
+		res.ErrorCode = "canceled"
+	case err != nil:
+		res.ErrorCode = "check_failed"
+	default:
+		res.Status = StatusCompleted
+		if findings != nil {
+			res.Findings = findings
+		}
+	}
+	if len(res.Probes) > 0 {
+		completed, failed, skipped, unknown := 0, 0, 0, 0
+		for _, p := range res.Probes {
+			switch p.Status {
+			case "completed":
+				completed++
+			case "failed":
+				failed++
+			case "skipped":
+				skipped++
+				if p.CoverageUnknown {
+					unknown++
+				}
+			}
+		}
+		switch {
+		case completed > 0 && completed+skipped == len(res.Probes) && unknown == 0:
+			res.Status = StatusCompleted
+		case skipped == len(res.Probes):
+			res.Status = StatusSkipped
+		case failed == len(res.Probes):
+			res.Status = StatusFailed
+		default:
+			res.Status = StatusIncomplete
+		}
+		if res.Status == StatusIncomplete && (res.ErrorCode == "" || res.ErrorCode == "check_failed") {
+			res.ErrorCode = "partial_coverage"
+		}
+		if res.Status == StatusFailed && res.ErrorCode == "" {
+			res.ErrorCode = "check_failed"
+		}
+	}
 	return res
 }
