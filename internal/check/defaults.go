@@ -13,9 +13,10 @@ type DefaultChecksOptions struct {
 func NewDefaultChecks(opts DefaultChecksOptions) []Check {
 	headers := &HeadersCheck{}
 	tlsCheck := &TLSCheck{publicTargetsOnly: opts.PublicTargetsOnly}
+	cms := &CMSCheck{publicTargetsOnly: opts.PublicTargetsOnly}
 	if opts.PublicTargetsOnly {
 		headers.Client = NewPublicHTTPClient()
 	}
 	exposures := &ExposuresCheck{publicTargetsOnly: opts.PublicTargetsOnly}
-	return []Check{tlsCheck, headers, exposures, &EmailCheck{}}
+	return []Check{tlsCheck, headers, exposures, cms, &EmailCheck{}}
 }

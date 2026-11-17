@@ -44,6 +44,18 @@ func (exposureDetailedRPCCheck) Name() string { return "exposures" }
 func (exposureDetailedRPCCheck) Run(context.Context, string) ([]check.Finding, error) {
 	return nil, nil
 }
+
+type cmsDetailedRPCCheck struct{}
+
+func (cmsDetailedRPCCheck) Name() string { return "cms" }
+func (cmsDetailedRPCCheck) Run(context.Context, string) ([]check.Finding, error) {
+	return nil, nil
+}
+func (cmsDetailedRPCCheck) RunDetailed(context.Context, string) (check.Detail, error) {
+	return check.Detail{Probes: []check.ProbeResult{{
+		ID: "cms.version", Type: "cms_version", Status: "completed", Location: "/",
+	}}}, nil
+}
 func (exposureDetailedRPCCheck) RunDetailed(context.Context, string) (check.Detail, error) {
 	return check.Detail{Probes: []check.ProbeResult{{
 		ID: "exposures.env@/.env", Type: "exposures_env", Status: "completed", Location: "/.env",
@@ -365,5 +377,30 @@ func TestStartScanMapsExposureProbeTypes(t *testing.T) {
 	probe := result.Probes[0]
 	if probe.Type != pb.ProbeType_PROBE_TYPE_EXPOSURES_ENV || probe.Status != pb.CheckStatus_CHECK_STATUS_COMPLETED {
 		t.Fatalf("exposures probe enum mapping failed: %v", probe)
+	}
+}
+
+func TestStartScanMapsCMSProbeTypes(t *testing.T) {
+	client := rpcClient(t, cmsDetailedRPCCheck{})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	stream, err := client.StartScan(ctx, &pb.ScanRequest{ScanId: "cms", Domain: "example.com", Checks: []pb.CheckType{pb.CheckType_CHECK_TYPE_CMS}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Recv(); err != nil {
+		t.Fatal(err)
+	}
+	event, err := stream.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := event.GetCheckDone()
+	if result == nil || result.Check != pb.CheckType_CHECK_TYPE_CMS || len(result.Probes) != 1 {
+		t.Fatalf("bad CMS result: %v", event)
+	}
+	probe := result.Probes[0]
+	if probe.Type != pb.ProbeType_PROBE_TYPE_CMS_VERSION || probe.Status != pb.CheckStatus_CHECK_STATUS_COMPLETED {
+		t.Fatalf("CMS probe enum mapping failed: %v", probe)
 	}
 }
