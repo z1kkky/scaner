@@ -32,6 +32,9 @@ const (
 
 type Summary struct {
 	Status          SummaryStatus
+	Score           *int32
+	Grade           string
+	Message         string
 	CompletedChecks int
 	RequestedChecks int
 	FinishedAt      time.Time
@@ -110,11 +113,13 @@ func Run(ctx context.Context, req Request, available []check.Check, timeout time
 
 	summary := Summary{RequestedChecks: len(actual)}
 	var failed int
+	completedResults := make([]runner.Result, 0, len(selected))
 	for range selected {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case result := <-results:
+			completedResults = append(completedResults, result)
 			if result.Status == runner.StatusCompleted {
 				summary.CompletedChecks++
 			}
@@ -135,6 +140,38 @@ func Run(ctx context.Context, req Request, available []check.Check, timeout time
 	default:
 		summary.Status = SummaryPartial
 	}
+	if fullCheckSet(actual, defaultNames) && summary.Status == SummaryCompleted {
+		summary.Score, summary.Grade = calculateScore(completedResults)
+		if summary.Score != nil {
+			summary.Message = "Эвристическая оценка рассчитана по всем реализованным категориям; информационные находки не снижают балл."
+		}
+	}
+	if summary.Score == nil {
+		switch {
+		case !fullCheckSet(actual, defaultNames):
+			summary.Message = "Оценка не рассчитана: запросите все реализованные категории."
+		case summary.Status != SummaryCompleted:
+			summary.Message = "Оценка не рассчитана: одна или несколько проверок завершились неполно."
+		default:
+			summary.Message = "Оценка не рассчитана: в результатах есть находка с неизвестной серьёзностью."
+		}
+	}
 	summary.FinishedAt = time.Now().UTC()
 	return emit(Event{Finished: &summary})
+}
+
+func fullCheckSet(requested, available []string) bool {
+	if len(requested) != len(available) {
+		return false
+	}
+	requestedSet := make(map[string]bool, len(requested))
+	for _, name := range requested {
+		requestedSet[name] = true
+	}
+	for _, name := range available {
+		if !requestedSet[name] {
+			return false
+		}
+	}
+	return true
 }

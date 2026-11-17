@@ -154,8 +154,15 @@ func TestStartScanWireEvents(t *testing.T) {
 			t.Fatal("missing check results")
 		}
 		summary := events[len(events)-1].GetFinished()
-		if summary == nil || summary.Status != wantStatus || summary.CompletedChecks != 1 || summary.RequestedChecks != int32(wantCount-2) || summary.Score != nil || summary.Grade != pb.Grade_GRADE_UNSPECIFIED {
+		if summary == nil || summary.Status != wantStatus || summary.CompletedChecks != 1 || summary.RequestedChecks != int32(wantCount-2) {
 			t.Fatalf("bad summary: %v", summary)
+		}
+		if explicit {
+			if summary.Score != nil || summary.Grade != pb.Grade_GRADE_UNSPECIFIED || summary.Message == "" {
+				t.Fatalf("partial scan must not receive a score: %v", summary)
+			}
+		} else if summary.GetScore() != 90 || summary.Grade != pb.Grade_GRADE_A || summary.Message == "" {
+			t.Fatalf("full scan should receive the documented score: %v", summary)
 		}
 	}
 }

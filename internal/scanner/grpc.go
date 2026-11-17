@@ -159,7 +159,10 @@ func protoEvent(event Event) *pb.ScanEvent {
 		s := event.Finished
 		out.Payload = &pb.ScanEvent_Finished{Finished: &pb.ScanSummary{
 			Status:          pb.ScanStatus(pb.ScanStatus_value["SCAN_STATUS_"+strings.ToUpper(string(s.Status))]),
+			Score:           s.Score,
+			Grade:           pb.Grade(pb.Grade_value["GRADE_"+strings.ToUpper(s.Grade)]),
 			CompletedChecks: int32(s.CompletedChecks), RequestedChecks: int32(s.RequestedChecks),
+			Message:         s.Message,
 			FinishedAt: timestamppb.New(s.FinishedAt),
 		}}
 	}
