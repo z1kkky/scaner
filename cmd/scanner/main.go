@@ -46,10 +46,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	// Список проверок. Новую проверку добавляем сюда одной строкой.
-	checks := []check.Check{
-		&check.HeadersCheck{},
-	}
+	checks := check.NewDefaultChecks(check.DefaultChecksOptions{})
 
 	// Ctrl+C отменит контекст, и все проверки аккуратно остановятся.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)

@@ -6,40 +6,37 @@ package check
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
-	"time"
 )
 
-// newTestServer поднимает локальный HTTPS-сервер, который отвечает
-// с заданными заголовками. Никакого реального интернета — тест быстрый
-// и не зависит от чужих сайтов.
-func newTestServer(t *testing.T, headers map[string]string) (*httptest.Server, string) {
-	t.Helper() // при ошибке Go покажет строку в тесте, а не здесь
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		for k, v := range headers {
-			w.Header().Set(k, v)
-		}
-		w.Write([]byte("hello"))
-	}))
-	t.Cleanup(srv.Close) // закрыть сервер, когда тест закончится
+type roundTripFunc func(*http.Request) (*http.Response, error)
 
-	// srv.URL выглядит как "https://127.0.0.1:41234" — отрезаем схему,
-	// получаем то, что проверка ожидает как «домен».
-	domain := strings.TrimPrefix(srv.URL, "https://")
-	return srv, domain
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 func runHeaders(t *testing.T, headers map[string]string) []Finding {
 	t.Helper()
-	srv, domain := newTestServer(t, headers)
-	// srv.Client() доверяет самоподписанному сертификату тестового сервера.
-	c := &HeadersCheck{Client: srv.Client()}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	return c.Run(ctx, domain)
+	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodGet || req.URL.String() != "https://example.com/" {
+			t.Fatalf("неожиданный запрос: %s %s", req.Method, req.URL)
+		}
+
+		response := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody}
+		for name, value := range headers {
+			response.Header.Set(name, value)
+		}
+		return response, nil
+	})}
+	c := &HeadersCheck{Client: client}
+	findings, err := c.Run(context.Background(), "example.com")
+	if err != nil {
+		t.Fatalf("проверка заголовков завершилась ошибкой: %v", err)
+	}
+	return findings
 }
 
 func TestHeaders_AllGood(t *testing.T) {
@@ -117,10 +114,12 @@ func TestHeaders_Cases(t *testing.T) {
 }
 
 func TestHeaders_Unreachable(t *testing.T) {
-	// Порт 1 на localhost почти наверняка закрыт — соединение не установится.
-	c := &HeadersCheck{}
-	findings := c.Run(context.Background(), "127.0.0.1:1")
-	if len(findings) != 1 || findings[0].Severity != SeverityInfo {
-		t.Fatalf("ожидали одну info-находку, получили: %+v", findings)
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, io.ErrUnexpectedEOF
+	})}
+	c := &HeadersCheck{Client: client}
+	findings, err := c.Run(context.Background(), "example.com")
+	if !errors.Is(err, io.ErrUnexpectedEOF) || len(findings) != 0 {
+		t.Fatalf("ожидали ошибку без находок, получили: %+v, %v", findings, err)
 	}
 }

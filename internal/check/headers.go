@@ -18,7 +18,8 @@ type HeadersCheck struct {
 	// Client — HTTP-клиент для запроса. Если nil, используется клиент
 	// по умолчанию (см. client()). В тестах сюда подставляем клиент
 	// тестового сервера.
-	Client *http.Client
+	Client    *http.Client
+	PagePaths []string
 }
 
 // Name возвращает имя проверки. Благодаря методам Name и Run
@@ -47,27 +48,10 @@ func (h *HeadersCheck) client() *http.Client {
 	}
 }
 
-func (h *HeadersCheck) Run(ctx context.Context, domain string) []Finding {
-	// Готовим запрос. NewRequestWithContext привязывает запрос к ctx:
-	// если время вышло, запрос оборвётся сам.
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+domain+"/", nil)
-	if err != nil {
-		return []Finding{h.unreachable(err)}
-	}
-	// Честно представляемся, чтобы владелец видел в логах, кто приходил.
-	req.Header.Set("User-Agent", "scaner/0.1 (+https://github.com/z1kkky/scaner)")
+func (h *HeadersCheck) Run(ctx context.Context, domain string) ([]Finding, error) {
+	detail, err := h.RunDetailed(ctx, domain)
 
-	resp, err := h.client().Do(req)
-	if err != nil {
-		return []Finding{h.unreachable(err)}
-	}
-	// defer выполнится при выходе из функции. Тело ответа нам не нужно,
-	// но закрыть его обязательно, иначе утечёт соединение.
-	defer resp.Body.Close()
-
-	// Дальше просто анализируем заголовки — отдельная функция,
-	// чтобы логику было легко читать и тестировать.
-	return analyzeHeaders(resp.Header)
+	return detail.Findings, err
 }
 
 // analyzeHeaders смотрит на заголовки и возвращает список проблем.
@@ -79,7 +63,8 @@ func analyzeHeaders(hdr http.Header) []Finding {
 	hsts := hdr.Get("Strict-Transport-Security") // Get не зависит от регистра имени
 	if hsts == "" {
 		findings = append(findings, Finding{
-			CheckName:   "headers",
+			CheckName: "headers",
+			ID:        "headers.missing_hsts", ProbeID: "headers.hsts", Probe: "headers_hsts",
 			Title:       "Нет заголовка HSTS",
 			Severity:    SeverityMedium,
 			Description: "Браузер может открыть сайт по незащищённому HTTP. В публичном Wi-Fi злоумышленник сможет подменить страницу или перехватить данные.",
@@ -87,7 +72,8 @@ func analyzeHeaders(hdr http.Header) []Finding {
 		})
 	} else if age, ok := hstsMaxAge(hsts); !ok || age < minHSTSMaxAge {
 		findings = append(findings, Finding{
-			CheckName:   "headers",
+			CheckName: "headers",
+			ID:        "headers.short_hsts", ProbeID: "headers.hsts", Probe: "headers_hsts",
 			Title:       "Слишком короткий срок HSTS",
 			Severity:    SeverityLow,
 			Description: fmt.Sprintf("HSTS включён, но max-age меньше полугода (сейчас: %q). Защита быстро «забывается» браузером.", hsts),
@@ -100,7 +86,8 @@ func analyzeHeaders(hdr http.Header) []Finding {
 	csp := hdr.Get("Content-Security-Policy")
 	if csp == "" {
 		findings = append(findings, Finding{
-			CheckName:   "headers",
+			CheckName: "headers",
+			ID:        "headers.missing_csp", ProbeID: "headers.csp", Probe: "headers_csp",
 			Title:       "Нет политики безопасности контента (CSP)",
 			Severity:    SeverityMedium,
 			Description: "Если на сайт попадёт чужой скрипт (например, через уязвимый плагин), браузер выполнит его без ограничений. Так крадут данные карт и аккаунты.",
@@ -115,7 +102,8 @@ func analyzeHeaders(hdr http.Header) []Finding {
 	hasFrameAncestors := strings.Contains(strings.ToLower(csp), "frame-ancestors")
 	if xfo != "DENY" && xfo != "SAMEORIGIN" && !hasFrameAncestors {
 		findings = append(findings, Finding{
-			CheckName:   "headers",
+			CheckName: "headers",
+			ID:        "headers.missing_frame_protection", ProbeID: "headers.frame_protection", Probe: "headers_frame_protection",
 			Title:       "Сайт можно встроить в чужую страницу",
 			Severity:    SeverityMedium,
 			Description: "Злоумышленник может показать ваш сайт внутри своего под прозрачным слоем и заставить посетителя нажать не ту кнопку (кликджекинг).",
@@ -127,7 +115,8 @@ func analyzeHeaders(hdr http.Header) []Finding {
 	// Запрещает браузеру «угадывать» тип файла.
 	if strings.ToLower(strings.TrimSpace(hdr.Get("X-Content-Type-Options"))) != "nosniff" {
 		findings = append(findings, Finding{
-			CheckName:   "headers",
+			CheckName: "headers",
+			ID:        "headers.missing_nosniff", ProbeID: "headers.nosniff", Probe: "headers_nosniff",
 			Title:       "Браузер может неверно определить тип файла",
 			Severity:    SeverityLow,
 			Description: "Без этого заголовка загруженная картинка или текстовый файл может быть выполнен браузером как скрипт.",
@@ -153,16 +142,4 @@ func hstsMaxAge(value string) (int, bool) {
 		}
 	}
 	return 0, false
-}
-
-// unreachable превращает сетевую ошибку в находку уровня info,
-// чтобы в отчёте было видно, что проверка не смогла отработать.
-func (h *HeadersCheck) unreachable(err error) Finding {
-	return Finding{
-		CheckName:   h.Name(),
-		Title:       "Не удалось получить главную страницу по HTTPS",
-		Severity:    SeverityInfo,
-		Description: "Заголовки не проверены: " + err.Error(),
-		Fix:         "Убедитесь, что сайт открывается по https:// и сертификат действителен.",
-	}
 }
