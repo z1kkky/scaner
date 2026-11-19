@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/z1kkky/scaner/internal/targetscope"
 )
 
 const cmsResponseLimit = 8 << 10
@@ -25,6 +27,7 @@ type CMSCheck struct {
 	publicTargetsOnly bool
 	client            *http.Client
 	dialContext       func(context.Context, string, string) (net.Conn, error)
+	targetPolicy      *targetscope.Policy
 }
 
 func (*CMSCheck) Name() string { return "cms" }
@@ -102,6 +105,9 @@ func (c *CMSCheck) RunDetailed(ctx context.Context, domain string) (Detail, erro
 }
 
 func (c *CMSCheck) httpClient() *http.Client {
+	if c.targetPolicy != nil {
+		return NewScopedHTTPClient(c.targetPolicy)
+	}
 	if c.client != nil {
 		return c.client
 	}

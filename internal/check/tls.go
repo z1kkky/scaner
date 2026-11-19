@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/z1kkky/scaner/internal/targetscope"
 )
 
 const (
@@ -27,6 +29,7 @@ type TLSCheck struct {
 	publicTargetsOnly bool
 	dialContext       func(context.Context, string, string) (net.Conn, error)
 	rootCAs           *x509.CertPool
+	targetPolicy      *targetscope.Policy
 }
 
 func (*TLSCheck) Name() string { return "tls" }
@@ -234,6 +237,9 @@ func redirectsToSameHTTPSHost(location *url.URL, domain string) bool {
 }
 
 func (c *TLSCheck) dial() func(context.Context, string, string) (net.Conn, error) {
+	if c.targetPolicy != nil {
+		return c.targetPolicy.DialContext
+	}
 	if c.dialContext != nil {
 		return c.dialContext
 	}

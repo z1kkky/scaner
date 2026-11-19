@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/z1kkky/scaner/internal/targetscope"
 )
 
 const (
@@ -55,6 +57,7 @@ type ExposuresCheck struct {
 	publicTargetsOnly bool
 	client            *http.Client
 	dialContext       func(context.Context, string, string) (net.Conn, error)
+	targetPolicy      *targetscope.Policy
 }
 
 func (*ExposuresCheck) Name() string { return "exposures" }
@@ -171,6 +174,9 @@ func (c *ExposuresCheck) runTarget(ctx context.Context, client *http.Client, dom
 }
 
 func (c *ExposuresCheck) httpClient() *http.Client {
+	if c.targetPolicy != nil {
+		return NewScopedHTTPClient(c.targetPolicy)
+	}
 	if c.client != nil {
 		return c.client
 	}

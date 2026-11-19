@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/netip"
 	"time"
+
+	"github.com/z1kkky/scaner/internal/targetscope"
 )
 
 // NewPublicHTTPClient returns a client that connects only to globally routable
@@ -25,6 +27,12 @@ func NewPublicHTTPClient() *http.Client {
 		},
 		Timeout: 15 * time.Second,
 	}
+}
+
+// NewScopedHTTPClient preserves the request hostname (Host and TLS SNI) while
+// the policy dialer connects only to the job's immutable address snapshot.
+func NewScopedHTTPClient(policy *targetscope.Policy) *http.Client {
+	return &http.Client{Transport: &http.Transport{DialContext: policy.DialContext, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 10 * time.Second, MaxResponseHeaderBytes: 64 << 10, IdleConnTimeout: 30 * time.Second}, Timeout: 15 * time.Second}
 }
 
 var blockedPrefixes = func() []netip.Prefix {
