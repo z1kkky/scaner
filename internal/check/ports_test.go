@@ -5,12 +5,29 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/netip"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/z1kkky/scaner/internal/targetscope"
 )
+
+type portsScopeResolver struct{}
+
+func (portsScopeResolver) LookupTXT(context.Context, string) ([]string, error) { return nil, nil }
+func (portsScopeResolver) LookupCNAME(_ context.Context, host string) (string, error) {
+	return host, nil
+}
+func (portsScopeResolver) LookupNetIP(context.Context, string, string) ([]netip.Addr, error) {
+	return []netip.Addr{netip.MustParseAddr("8.8.8.8")}, nil
+}
+func (portsScopeResolver) ResolveTarget(_ context.Context, host string) ([]string, []netip.Addr, error) {
+	return []string{host}, []netip.Addr{netip.MustParseAddr("8.8.8.8")}, nil
+}
 
 func TestPortsCheckUsesFixedAllowlistAndClosesWithoutPayload(t *testing.T) {
 	var serverSide net.Conn
@@ -108,5 +125,31 @@ func TestPortTargetListContainsOnlyUniqueFixedPorts(t *testing.T) {
 	}
 	if len(seen) > 16 {
 		t.Fatalf("fixed TCP allowlist unexpectedly grew to %d ports", len(seen))
+	}
+}
+
+func TestPortsCheckSkipsEveryPortOutsideFrozenPolicy(t *testing.T) {
+	dialed := 0
+	policy, err := targetscope.FreezeWithDial(context.Background(), portsScopeResolver{}, "example.test", nil, []uint16{443}, func(context.Context, string, string) (net.Conn, error) {
+		dialed++
+		return nil, errors.New("unexpected dial")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, err := (&PortsCheck{targetPolicy: policy}).RunDetailed(context.Background(), "example.test")
+	if err != nil {
+		t.Fatalf("out-of-policy ports should be explicitly skipped: %v", err)
+	}
+	if dialed != 0 {
+		t.Fatalf("made %d TCP dial attempts outside policy", dialed)
+	}
+	if len(detail.Probes) != len(tcpPortTargets) || len(detail.Findings) != 0 {
+		t.Fatalf("unexpected result: %+v", detail)
+	}
+	for _, probe := range detail.Probes {
+		if probe.Status != "skipped" || !strings.Contains(probe.Message, "не вход") {
+			t.Errorf("out-of-policy probe was not marked skipped: %+v", probe)
+		}
 	}
 }

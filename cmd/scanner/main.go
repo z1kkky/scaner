@@ -29,6 +29,7 @@ import (
 func main() {
 	// flag разбирает аргументы командной строки вида -timeout 20s.
 	timeout := flag.Duration("timeout", 10*time.Second, "таймаут на каждую проверку")
+	nucleiEnabled := flag.Bool("nuclei", false, "дополнительно запустить ограниченный встроенный набор Nuclei HTTP-проверок")
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Использование: scanner [-timeout 10s] <домен>")
 		flag.PrintDefaults()
@@ -46,7 +47,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	checks := check.NewDefaultChecks(check.DefaultChecksOptions{})
+	checks := check.NewDefaultChecks(check.DefaultChecksOptions{EnableNuclei: *nucleiEnabled})
 
 	// Ctrl+C отменит контекст, и все проверки аккуратно остановятся.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)

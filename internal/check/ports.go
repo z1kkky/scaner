@@ -8,6 +8,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/z1kkky/scaner/internal/targetscope"
 )
 
 const (
@@ -41,6 +43,7 @@ var tcpPortTargets = []tcpPortTarget{
 type PortsCheck struct {
 	publicTargetsOnly bool
 	dialContext       func(context.Context, string, string) (net.Conn, error)
+	targetPolicy      *targetscope.Policy
 }
 
 func (*PortsCheck) Name() string { return "ports" }
@@ -60,6 +63,11 @@ func (c *PortsCheck) RunDetailed(ctx context.Context, domain string) (Detail, er
 		detail.Probes[i] = ProbeResult{
 			ID: fmt.Sprintf("ports.tcp@%d", target.port), Type: portsTCPProbe,
 			Status: "failed", Location: fmt.Sprintf("%s:%d", domain, target.port),
+		}
+		if c.targetPolicy != nil && !containsAllowedPort(c.targetPolicy.AllowedPorts(), target.port) {
+			detail.Probes[i].Status = "skipped"
+			detail.Probes[i].Message = "Порт не входит в подтверждённую область; подключение не выполнялось."
+			continue
 		}
 		wg.Add(1)
 		go func(index int, target tcpPortTarget) {
@@ -93,6 +101,15 @@ func (c *PortsCheck) RunDetailed(ctx context.Context, domain string) (Detail, er
 	return detail, errors.Join(joined...)
 }
 
+func containsAllowedPort(ports []uint16, expected uint16) bool {
+	for _, port := range ports {
+		if port == expected {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *PortsCheck) probePort(parent context.Context, domain string, target tcpPortTarget) (ProbeResult, *Finding, error) {
 	probe := ProbeResult{
 		ID: fmt.Sprintf("ports.tcp@%d", target.port), Type: portsTCPProbe,
@@ -124,6 +141,9 @@ func (c *PortsCheck) probePort(parent context.Context, domain string, target tcp
 }
 
 func (c *PortsCheck) dial() func(context.Context, string, string) (net.Conn, error) {
+	if c.targetPolicy != nil {
+		return c.targetPolicy.DialContext
+	}
 	if c.dialContext != nil {
 		return c.dialContext
 	}

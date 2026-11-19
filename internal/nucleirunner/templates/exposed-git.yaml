@@ -1,0 +1,22 @@
+id: scaner-exposed-git-head
+
+info:
+  name: Exposed Git repository metadata
+  author: scaner
+  severity: high
+  description: A repository metadata endpoint is publicly readable.
+  tags: misconfig,exposure
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/.git/HEAD"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - "ref: refs/heads/"

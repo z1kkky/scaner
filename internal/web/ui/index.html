@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f5f2">
+  <title>Scaner — кабинет безопасности</title>
+  <meta name="description" content="Локальный кабинет проверки безопасности сайтов.">
+  <link rel="stylesheet" href="/ui/style.css">
+  <script src="/ui/app.js" defer></script>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" aria-label="Навигация">
+      <a class="brand" href="#overview" data-page="overview"><span class="mark" aria-hidden="true">⌁</span>scaner<span>LOCAL</span></a>
+      <div><p class="nav-label">Рабочая область</p><nav class="nav">
+        <button data-page="overview" class="active"><span class="ico" aria-hidden="true">▦</span>Обзор</button>
+        <button data-page="domains"><span class="ico" aria-hidden="true">◎</span>Мои сайты</button>
+        <button data-page="report"><span class="ico" aria-hidden="true">▤</span>Отчёт</button>
+      </nav></div>
+      <div class="sidebar-bottom"><p class="side-caption">Как это работает</p><div class="help"><strong>Только разрешённые цели</strong>Подтвердите DNS, задайте область проверки и подтвердите письменное разрешение перед запуском.</div><div class="user"><span class="avatar">S</span><span><b>Локальный оператор</b><small id="apiState" aria-live="polite">Подключение…</small></span></div></div>
+    </aside>
+    <main class="main"><div class="content">
+      <header class="topbar"><div class="crumb">Рабочая область&nbsp; / &nbsp;<b id="breadcrumb">Обзор</b></div><div class="topright"><span id="topDate" class="date"></span><span class="demo"><i class="dot"></i>Локальный прототип</span></div></header>
+      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+      <section class="page active" id="overview">
+        <div class="hero"><div><p class="eyebrow">Панель безопасности</p><h1>Ваши сайты под контролем</h1><p>Проверяйте настройки безопасности и смотрите, что стоит исправить в первую очередь. Никакой командной строки.</p></div><button class="primary" data-action="add">＋ &nbsp;Добавить сайт</button></div>
+        <div class="grid-main">
+          <article class="card spotlight"><div class="site-line"><span class="site-icon">◎</span><span><b id="spotDomain">Пока нет подтверждённых сайтов</b><small id="spotMeta">Добавьте свой домен, чтобы начать</small></span></div><div class="scoreline"><div class="score-ring" id="scoreRing" aria-label="Оценка безопасности недоступна"><svg class="score-gauge" viewBox="0 0 100 100" aria-hidden="true"><circle class="score-track" cx="50" cy="50" r="46" pathLength="100"></circle><circle id="scoreArc" class="score-arc" cx="50" cy="50" r="46" pathLength="100" stroke-dasharray="0 100"></circle></svg><div><strong id="scoreValue">—</strong><small id="scoreScale">из 100</small></div></div><div class="score-copy"><span id="scoreGrade" class="grade">НЕТ ОЦЕНКИ</span><h3 id="scoreHeading">Оценка появится после проверки</h3><p id="scoreDescription">Для неполного отчёта балл не рассчитывается: сначала нужен полный охват категорий.</p></div></div><div class="spot-foot"><span id="spotFoot">◎ Добавьте сайт и подтвердите DNS</span><button data-page="report">Открыть отчёт →</button></div></article>
+          <article class="card summary"><p class="small-title">Итоги последней проверки</p><div class="stats"><div class="stat danger"><strong id="summaryCritical">—</strong><span>критичных<br>проблем</span></div><div class="stat warning"><strong id="summaryAttention">—</strong><span>требуют<br>внимания</span></div><div class="stat good"><strong id="summaryClean">—</strong><span>категории<br>без замечаний</span></div><div class="stat muted"><strong id="summaryPartial">—</strong><span>проверена<br>частично</span></div></div><div id="summaryNote" class="summary-note">Сводка появится после первой задачи. Частичная проверка не означает, что проблем нет.</div></article>
+        </div>
+        <div class="two-col"><div><div class="section-head"><h2>Что проверили</h2><button class="subtle" data-page="report">Все результаты →</button></div><div class="card checks" id="overviewChecks"><div class="empty-note">Пока нет данных проверки.</div></div></div><div><div class="section-head"><h2>Последние действия</h2></div><div class="card activity"><div id="activityTimeline" class="timeline"><div class="event"><b>Начните с добавления сайта</b><small>Проверки появятся здесь после запуска</small></div></div><button class="secondary" data-action="retry">↻ &nbsp;Повторить проверку</button></div></div></div>
+      </section>
+
+      <section class="page" id="domains" hidden><div class="hero"><div><p class="eyebrow">Ваши домены</p><h1>Мои сайты</h1><p>Для запуска проверки подтвердите контроль над доменом через DNS и укажите только разрешённые цели.</p></div><button class="primary" data-action="add">＋ &nbsp;Добавить сайт</button></div><div class="section-head"><h2>Добавленные сайты</h2><small id="domainCount">0 сайтов</small></div><div id="domainList"></div><div class="empty-note">Как это работает: добавьте домен → разместите выданную TXT-запись → подтвердите область и порты → зафиксируйте письменное разрешение. Файловое подтверждение и поиск поддоменов не поддерживаются.</div></section>
+
+      <section class="page" id="report" hidden><div class="hero"><div><p class="eyebrow">Результаты проверки</p><h1>Отчёт по сайту</h1><p>Конкретные замечания, возможные последствия и шаги для исправления.</p></div><button class="secondary" data-action="retry">↻ &nbsp;Проверить снова</button></div><div class="card report-top"><div><h2 id="reportDomain">Нет выбранного отчёта</h2><p id="reportMeta">Запустите демо или откройте завершённую задачу.</p><div class="report-metrics"><span class="metric"><b id="reportCategories">—</b> категорий</span><span class="metric"><b id="reportFindingCount">—</b> замечаний</span><span class="metric"><b id="reportPartialCount">—</b> частичных</span><span class="metric"><b id="reportCriticalCount">—</b> критичных</span></div></div><div class="report-score"><strong id="reportScore">—</strong><span id="reportGrade">из 100<br>Оценка недоступна</span></div></div><div class="two-col"><div><div class="section-head"><h2>Замечания и рекомендации</h2></div><div class="filters" aria-label="Фильтр замечаний"><button data-filter="all" class="selected">Все</button><button data-filter="medium">Средние</button><button data-filter="low">Низкие</button><button data-filter="partial">Неполные</button></div><div id="findings" class="findings-list"></div></div><div><div class="section-head"><h2>По категориям</h2></div><div class="card checks" id="reportChecks"><div class="empty-note">Нет данных для отображения.</div></div><div class="card report-aside"><h3>Что делать дальше?</h3><p>Проверьте каждую рекомендацию, устраните подтверждённые проблемы и повторите сканирование.</p><button class="secondary" data-action="retry">↻ &nbsp;Повторить проверку</button><button class="subtle demo-report-button" data-action="run-demo">Открыть пример отчёта</button><div id="reportIncomplete" class="incomplete" hidden></div></div></div></div><div class="section-head history-title"><h2>История задач</h2></div><div id="jobHistory"></div></section>
+      <div class="footer-note">Scaner · локальный прототип · демо отмечено отдельно и не выполняет сетевых запросов</div>
+    </div></main>
+  </div>
+  <div class="overlay" id="overlay" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal" id="modal"></div></div><div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

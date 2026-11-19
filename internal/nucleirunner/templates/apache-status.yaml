@@ -1,0 +1,22 @@
+id: scaner-apache-server-status
+
+info:
+  name: Public Apache server-status page
+  author: scaner
+  severity: low
+  description: An Apache status page is available without authentication.
+  tags: misconfig,exposure
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/server-status"
+    matchers-condition: and
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        part: body
+        words:
+          - "Apache Server Status"
